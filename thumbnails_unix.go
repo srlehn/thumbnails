@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/exp/slices"
 
-	pngstructure "github.com/dsoprea/go-png-image-structure"
+	pngstructure "github.com/dsoprea/go-png-image-structure/v2"
 	"github.com/nfnt/resize"
 )
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	pngstructure "github.com/dsoprea/go-png-image-structure"
+	pngstructure "github.com/dsoprea/go-png-image-structure/v2"
 )
 
 type thumbnailFile struct {
