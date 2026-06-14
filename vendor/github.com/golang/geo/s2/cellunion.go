@@ -17,6 +17,7 @@ package s2
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 
 	"github.com/golang/geo/s1"
@@ -114,12 +115,15 @@ func CellUnionFromIntersection(x, y CellUnion) CellUnion {
 // CellUnion into chunks.
 func CellUnionFromIntersectionWithCellID(x CellUnion, id CellID) CellUnion {
 	var cu CellUnion
+	// If x contains id, the intersection is just id.
 	if x.ContainsCellID(id) {
 		cu = append(cu, id)
 		cu.Normalize()
 		return cu
 	}
 
+	// Otherwise, id may contain multiple cells of x.
+	// We skip to the first overlapping cell and collect all cells within id's range.
 	idmax := id.RangeMax()
 	for i := x.lowerBound(0, len(x), id.RangeMin()); i < len(x) && x[i] <= idmax; i++ {
 		cu = append(cu, x[i])
@@ -129,15 +133,51 @@ func CellUnionFromIntersectionWithCellID(x CellUnion, id CellID) CellUnion {
 	return cu
 }
 
+// cellUnionDifferenceInternal adds (xid - y) to the CellUnion. It subdivides
+// xid when there is partial overlap, narrowing y before recursing.
+func (cu *CellUnion) cellUnionDifferenceInternal(xid CellID, y CellUnion) {
+	var lo, hi int
+	if len(y) > 0 {
+		idMin := xid.RangeMin()
+
+		// Find the range of cells in y that could overlap with xid.
+		lo = sort.Search(len(y), func(i int) bool {
+			return y[i].RangeMax() >= idMin
+		})
+
+		idMax := xid.RangeMax()
+
+		// Find first cell past our range.
+		hi = lo + sort.Search(len(y)-lo, func(i int) bool {
+			return y[(lo+i)].RangeMin() > idMax
+		})
+	}
+
+	if lo >= hi {
+		*cu = append(*cu, xid)
+		return
+	}
+
+	// If xid is disjoint from y, add the entire cell and stop.
+	y = y[lo:hi]
+
+	// If xid is entirely contained by y, it is completely subtracted.
+	if y.ContainsCellID(xid) {
+		return
+	}
+
+	// Partial overlap: subdivide xid and recurse.
+	for _, child := range xid.Children() {
+		cu.cellUnionDifferenceInternal(child, y)
+	}
+}
+
 // CellUnionFromDifference creates a CellUnion from the difference (x - y)
 // of the given CellUnions.
 func CellUnionFromDifference(x, y CellUnion) CellUnion {
-	// TODO(roberts): This is approximately O(N*log(N)), but could probably
-	// use similar techniques as CellUnionFromIntersectionWithCellID to be more efficient.
-
 	var cu CellUnion
 	for _, xid := range x {
-		cu.cellUnionDifferenceInternal(xid, &y)
+		cu.cellUnionDifferenceInternal(xid, y)
 	}
 
 	// The output is generated in sorted order, and there should not be any
@@ -272,10 +312,7 @@ func (cu *CellUnion) Denormalize(minLevel, levelMod int) {
 	var denorm CellUnion
 	for _, id := range *cu {
 		level := id.Level()
-		newLevel := level
-		if newLevel < minLevel {
-			newLevel = minLevel
-		}
+		newLevel := max(level, minLevel)
 		if levelMod > 1 {
 			newLevel += (MaxLevel - (newLevel - minLevel)) % levelMod
 			if newLevel > MaxLevel {
@@ -404,13 +441,7 @@ func (cu *CellUnion) Contains(o CellUnion) bool {
 
 // Intersects reports whether this CellUnion intersects any of the CellIDs of the given CellUnion.
 func (cu *CellUnion) Intersects(o CellUnion) bool {
-	for _, c := range *cu {
-		if o.IntersectsCellID(c) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(*cu, o.IntersectsCellID)
 }
 
 // lowerBound returns the index in this CellUnion to the first element whose value
@@ -424,22 +455,6 @@ func (cu *CellUnion) lowerBound(begin, end int, id CellID) int {
 	}
 
 	return end
-}
-
-// cellUnionDifferenceInternal adds the difference between the CellID and the union to
-// the result CellUnion. If they intersect but the difference is non-empty, it divides
-// and conquers.
-func (cu *CellUnion) cellUnionDifferenceInternal(id CellID, other *CellUnion) {
-	if !other.IntersectsCellID(id) {
-		(*cu) = append((*cu), id)
-		return
-	}
-
-	if !other.ContainsCellID(id) {
-		for _, child := range id.Children() {
-			cu.cellUnionDifferenceInternal(child, other)
-		}
-	}
 }
 
 // ExpandAtLevel expands this CellUnion by adding a rim of cells at expandLevel
@@ -491,7 +506,7 @@ func (cu *CellUnion) ExpandAtLevel(level int) {
 func (cu *CellUnion) ExpandByRadius(minRadius s1.Angle, maxLevelDiff int) {
 	minLevel := MaxLevel
 	for _, cid := range *cu {
-		minLevel = minInt(minLevel, cid.Level())
+		minLevel = min(minLevel, cid.Level())
 	}
 
 	// Find the maximum level such that all cells are at least "minRadius" wide.
@@ -501,7 +516,7 @@ func (cu *CellUnion) ExpandByRadius(minRadius s1.Angle, maxLevelDiff int) {
 		// The easiest way to handle this is to expand twice.
 		cu.ExpandAtLevel(0)
 	}
-	cu.ExpandAtLevel(minInt(minLevel+maxLevelDiff, radiusLevel))
+	cu.ExpandAtLevel(min(minLevel+maxLevelDiff, radiusLevel))
 }
 
 // Equal reports whether the two CellUnions are equal.
@@ -509,7 +524,7 @@ func (cu CellUnion) Equal(o CellUnion) bool {
 	if len(cu) != len(o) {
 		return false
 	}
-	for i := 0; i < len(cu); i++ {
+	for i := range cu {
 		if cu[i] != o[i] {
 			return false
 		}
@@ -544,6 +559,7 @@ func (cu *CellUnion) ExactArea() float64 {
 }
 
 // Encode encodes the CellUnion.
+// Note: The CellUnion is not required to be valid according to IsValid().
 func (cu *CellUnion) Encode(w io.Writer) error {
 	e := &encoder{w: w}
 	cu.encode(e)
@@ -559,6 +575,7 @@ func (cu *CellUnion) encode(e *encoder) {
 }
 
 // Decode decodes the CellUnion.
+// Note: The returned CellUnion is not necessarily valid according to IsValid().
 func (cu *CellUnion) Decode(r io.Reader) error {
 	d := &decoder{r: asByteReader(r)}
 	cu.decode(d)
@@ -574,7 +591,7 @@ func (cu *CellUnion) decode(d *decoder) {
 		d.err = fmt.Errorf("only version %d is supported", encodingVersion)
 		return
 	}
-	n := d.readInt64()
+	n := d.readUint64()
 	if d.err != nil {
 		return
 	}

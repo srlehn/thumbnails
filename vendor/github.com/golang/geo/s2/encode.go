@@ -26,9 +26,13 @@ const (
 	// format that is compatible with C++ and other S2 libraries.
 	encodingVersion = int8(1)
 
-	// encodingCompressedVersion is the current version of the
-	// compressed format.
-	encodingCompressedVersion = int8(4)
+	// encodingPolygonCompressedVersion is the current version of the
+	// compressed polygon format.
+	encodingPolygonCompressedVersion = int8(4)
+
+	// encodingPolylineCompressedVersion is the current version of the
+	// compressed polyline format.
+	encodingPolylineCompressedVersion = int8(2)
 )
 
 // encoder handles the specifics of encoding for S2 types.
@@ -156,14 +160,6 @@ func (d *decoder) readBool() (x bool) {
 }
 
 func (d *decoder) readInt8() (x int8) {
-	if d.err != nil {
-		return
-	}
-	d.err = binary.Read(d.r, binary.LittleEndian, &x)
-	return
-}
-
-func (d *decoder) readInt64() (x int64) {
 	if d.err != nil {
 		return
 	}

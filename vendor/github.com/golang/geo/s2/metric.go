@@ -34,6 +34,9 @@ type Metric struct {
 
 // Defined metrics.
 // Of the projection methods defined in C++, Go only supports the quadratic projection.
+// See
+// https://github.com/google/s2geometry/blob/58de4ea1e2f8a294e0c072c602c22232fd1433ad/src/s2/s2coords.h#L238
+// for more details.
 
 // Each cell is bounded by four planes passing through its four edges and
 // the center of the sphere. These metrics relate to the angle between each
@@ -119,13 +122,7 @@ func (m Metric) MinLevel(val float64) int {
 		return MaxLevel
 	}
 
-	level := -(math.Ilogb(val/m.Deriv) >> uint(m.Dim-1))
-	if level > MaxLevel {
-		level = MaxLevel
-	}
-	if level < 0 {
-		level = 0
-	}
+	level := max(min(-(math.Ilogb(val/m.Deriv)>>uint(m.Dim-1)), MaxLevel), 0)
 	return level
 }
 
@@ -141,13 +138,7 @@ func (m Metric) MaxLevel(val float64) int {
 		return MaxLevel
 	}
 
-	level := math.Ilogb(m.Deriv/val) >> uint(m.Dim-1)
-	if level > MaxLevel {
-		level = MaxLevel
-	}
-	if level < 0 {
-		level = 0
-	}
+	level := max(min(math.Ilogb(m.Deriv/val)>>uint(m.Dim-1), MaxLevel), 0)
 	return level
 }
 

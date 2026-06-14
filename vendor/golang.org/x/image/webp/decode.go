@@ -103,7 +103,7 @@ func decode(r io.Reader, configOnly bool) (image.Image, image.Config, error) {
 			return m, image.Config{}, nil
 
 		case fccVP8L:
-			if wantAlpha || alpha != nil {
+			if alpha != nil {
 				return nil, image.Config{}, errInvalidFormat
 			}
 			if configOnly {
@@ -134,6 +134,14 @@ func decode(r io.Reader, configOnly bool) (image.Image, image.Config, error) {
 			wantAlpha = (buf[0] & alphaBit) != 0
 			widthMinusOne = uint32(buf[4]) | uint32(buf[5])<<8 | uint32(buf[6])<<16
 			heightMinusOne = uint32(buf[7]) | uint32(buf[8])<<8 | uint32(buf[9])<<16
+			w := uint64(widthMinusOne) + 1
+			h := uint64(heightMinusOne) + 1
+			if w*h > 1<<31-1 {
+				// The product of _Canvas Width_ and _Canvas Height_ MUST be
+				// at most 2^32 - 1.
+				// But it also needs to fit in an int, so limit it to MaxInt32.
+				return nil, image.Config{}, errInvalidFormat
+			}
 			if configOnly {
 				if wantAlpha {
 					return nil, image.Config{
@@ -261,7 +269,7 @@ func Decode(r io.Reader) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return m, err
+	return m, nil
 }
 
 // DecodeConfig returns the color model and dimensions of a WEBP image without

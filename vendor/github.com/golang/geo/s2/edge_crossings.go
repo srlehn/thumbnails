@@ -25,11 +25,11 @@ import (
 const (
 	// intersectionError can be set somewhat arbitrarily, because the algorithm
 	// uses more precision if necessary in order to achieve the specified error.
-	// The only strict requirement is that intersectionError >= dblEpsilon
+	// The only strict requirement is that intersectionError >= machineEpsilon64
 	// radians. However, using a larger error tolerance makes the algorithm more
 	// efficient because it reduces the number of cases where exact arithmetic is
 	// needed.
-	intersectionError = s1.Angle(8 * dblError)
+	intersectionError = s1.Angle(8 * unitRoundoff64)
 
 	// intersectionMergeRadius is used to ensure that intersection points that
 	// are supposed to be coincident are merged back together into a single
@@ -152,9 +152,10 @@ func EdgeOrVertexCrossing(a, b, c, d Point) bool {
 		return false
 	case Cross:
 		return true
-	default:
-		return VertexCrossing(a, b, c, d)
+	case MaybeCross:
+		// Fall through to the final return.
 	}
+	return VertexCrossing(a, b, c, d)
 }
 
 // Intersection returns the intersection point of two edges AB and CD that cross
@@ -185,7 +186,7 @@ func Intersection(a0, a1, b0, b1 Point) Point {
 	//    error.
 	//
 	//  - intersectionExact computes the intersection point using precision
-	//    arithmetic and converts the final result back to an Point.
+	//    arithmetic and converts the final result back to a Point.
 	pt, ok := intersectionStable(a0, a1, b0, b1)
 	if !ok {
 		pt = intersectionExact(a0, a1, b0, b1)
@@ -253,14 +254,15 @@ func projection(x, aNorm r3.Vector, aNormLen float64, a0, a1 Point) (proj, bound
 
 	// This calculation bounds the error from all sources: the computation of
 	// the normal, the subtraction of one endpoint, and the dot product itself.
-	// dblError appears because the input points are assumed to be
+	// unitRoundoff64 appears because the input points are assumed to be
 	// normalized in double precision.
 	//
 	// For reference, the bounds that went into this calculation are:
-	// ||N'-N|| <= ((1 + 2 * sqrt(3))||N|| + 32 * sqrt(3) * dblError) * epsilon
-	// |(A.B)'-(A.B)| <= (1.5 * (A.B) + 1.5 * ||A|| * ||B||) * epsilon
-	// ||(X-Y)'-(X-Y)|| <= ||X-Y|| * epsilon
-	bound = (((3.5+2*math.Sqrt(3))*aNormLen+32*math.Sqrt(3)*dblError)*dist + 1.5*math.Abs(proj)) * epsilon
+	// ||N'-N|| <= ((1 + 2 * sqrt(3))||N|| + 32 * sqrt(3) * unitRoundoff64) * tErr
+	// |(A.B)'-(A.B)| <= (1.5 * (A.B) + 1.5 * ||A|| * ||B||) * tErr
+	// ||(X-Y)'-(X-Y)|| <= ||X-Y|| * tErr
+	tErr := roundingEpsilon(x.X)
+	bound = (((3.5+2*math.Sqrt(3))*aNormLen+32*math.Sqrt(3)*unitRoundoff64)*dist + 1.5*math.Abs(proj)) * tErr
 	return proj, bound
 }
 
@@ -334,14 +336,25 @@ func intersectionStableSorted(a0, a1, b0, b1 Point) (Point, bool) {
 	}
 
 	x := b1.Mul(b0Dist).Sub(b0.Mul(b1Dist))
+	tErr := roundingEpsilon(x.X)
 	err := bLen*math.Abs(b0Dist*b1Error-b1Dist*b0Error)/
-		(distSum-errorSum) + 2*distSum*epsilon
+		(distSum-errorSum) + 2*distSum*tErr
 
 	// Finally we normalize the result, compute the corresponding error, and
 	// check whether the total error is acceptable.
+
+	// TODO(rsned): C++ checks Norm2 > some small amount to prevent precision loss.
+	// xLen2 := x.Norm2()
+	// if xLen2 < math.SmallestNonzeroFloat64 {
+	//         // If x.Norm2() is less than the minimum normalized value of T, xLen might
+	//         // lose precision and the result might fail to satisfy IsUnitLength().
+	//         // TODO(rsned): Implement RobustNormalize().
+	//         return pt, false
+	// }
+
 	xLen := x.Norm()
 	maxError := intersectionError
-	if err > (float64(maxError)-epsilon)*xLen {
+	if err > (float64(maxError)-tErr)*xLen {
 		return pt, false
 	}
 
@@ -350,11 +363,11 @@ func intersectionStableSorted(a0, a1, b0, b1 Point) (Point, bool) {
 
 // intersectionExact returns the intersection point of (a0, a1) and (b0, b1)
 // using precise arithmetic. Note that the result is not exact because it is
-// rounded down to double precision at the end. Also, the intersection point
+// rounded down to float64 at the end. Also, the intersection point
 // is not guaranteed to have the correct sign (i.e., the return value may need
 // to be negated).
 func intersectionExact(a0, a1, b0, b1 Point) Point {
-	// Since we are using presice arithmetic, we don't need to worry about
+	// Since we are using precise arithmetic, we don't need to worry about
 	// numerical stability.
 	a0P := r3.PreciseVectorFromVector(a0.Vector)
 	a1P := r3.PreciseVectorFromVector(a1.Vector)
@@ -365,8 +378,8 @@ func intersectionExact(a0, a1, b0, b1 Point) Point {
 	xP := aNormP.Cross(bNormP)
 
 	// The final Normalize() call is done in double precision, which creates a
-	// directional error of up to 2*dblError. (Precise conversion and Normalize()
-	// each contribute up to dblError of directional error.)
+	// directional error of up to 2*unitRoundoff64. (Precise conversion and Normalize()
+	// each contribute up to unitRoundoff64 of directional error.)
 	x := xP.Vector()
 
 	if x == (r3.Vector{}) {
@@ -374,7 +387,7 @@ func intersectionExact(a0, a1, b0, b1 Point) Point {
 		// "crossing" because of simulation of simplicity. Out of the four
 		// endpoints, exactly two lie in the interior of the other edge. Of
 		// those two we return the one that is lexicographically smallest.
-		x = r3.Vector{10, 10, 10} // Greater than any valid S2Point
+		x = r3.Vector{X: 10, Y: 10, Z: 10} // Greater than any valid S2Point
 
 		aNorm := Point{aNormP.Vector()}
 		bNorm := Point{bNormP.Vector()}
