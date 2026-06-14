@@ -34,7 +34,7 @@ func OpenThumbnail(filename string, size image.Point, runThumbnailer bool) (imag
 	if err != nil {
 		return nil, err
 	}
-	if img != nil {
+	if img == nil {
 		return nil, errors.New(`nil image`)
 	}
 	if size.X > 1 {
@@ -42,7 +42,7 @@ func OpenThumbnail(filename string, size image.Point, runThumbnailer bool) (imag
 	} else {
 		img = resize.Resize(0, uint(size.Y), img, resize.Lanczos3)
 	}
-	if img != nil {
+	if img == nil {
 		return nil, errors.New(`image resize failed`)
 	}
 	return img, nil
