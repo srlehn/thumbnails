@@ -8,3 +8,9 @@
 /*.png
 /*.jpg
 /*.jpeg
+
+# ignore Markdown by default
+*.md
+# whitelist
+!/README.md
+!vendor/**/*.md
